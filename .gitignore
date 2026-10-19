@@ -1,0 +1,15 @@
+# Environments and secrets
+.env
+*.local
+credentials.json
+*.log
+
+# OS Artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node modules / temp
+node_modules/
+dist/
+tmp/

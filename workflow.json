@@ -1,0 +1,159 @@
+{
+  "name": "Chat with PDF - RAG Chatbot (Groq & BM25)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chat-pdf",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "5f244140-07e4-4052-a16a-48fabfe72ae5",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        416,
+        496
+      ],
+      "webhookId": "chat-pdf-rag-0001"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {}
+      },
+      "id": "d755dfdf-e512-49cb-9cb7-561b50da8be8",
+      "name": "Extract PDF Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        656,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ---------- Inputs ----------\nconst query = String($('Webhook').first().json.body?.query || '').trim();\nconst raw = String($input.first().json.text || '');\nconst text = raw.replace(/\\s+/g, ' ').trim();\n\n// ---------- Settings ----------\nconst CHUNK_SIZE = 1200;     // characters per chunk\nconst OVERLAP = 200;         // overlap between chunks\nconst TOP_K = 5;             // chunks sent to the LLM\nconst WHOLE_DOC_LIMIT = 12000; // small PDFs are sent in full\n\nconst system =\n  'You are a helpful assistant that answers questions about a PDF document. ' +\n  'Answer ONLY using the document excerpts provided. If the answer is not in the excerpts, ' +\n  'say \"I could not find that in the document.\" Be clear and concise.';\n\n// ---------- Edge cases ----------\nif (!text) {\n  return [{ json: { messages: [\n    { role: 'system', content: system },\n    { role: 'user', content: 'The uploaded PDF has no extractable text (it may be a scanned image). Politely tell the user this and suggest uploading a text-based PDF.' }\n  ], chunksUsed: 0, totalChunks: 0 } }];\n}\n\n// ---------- Chunking ----------\nconst chunks = [];\nfor (let i = 0; i < text.length; i += CHUNK_SIZE - OVERLAP) {\n  chunks.push(text.slice(i, i + CHUNK_SIZE));\n  if (i + CHUNK_SIZE >= text.length) break;\n}\n\n// ---------- Retrieval (BM25 keyword ranking, no embeddings needed) ----------\nlet selected;\nif (text.length <= WHOLE_DOC_LIMIT) {\n  selected = [text];\n} else {\n  const stop = new Set('a an the and or of to in on for with is are was were be been it its this that these those as at by from what which who whom how when where why do does did can could should would about into than then there their they you your i me my we our'.split(' '));\n  const tok = s => (s.toLowerCase().match(/[a-z0-9]+/g) || [])\n    .filter(w => w.length > 1 && !stop.has(w))\n    .map(w => w.length > 3 ? w.replace(/(ing|ed|es|s)$/, '') : w);\n\n  const docs = chunks.map(c => tok(c));\n  const N = docs.length;\n  const avgLen = docs.reduce((a, d) => a + d.length, 0) / N || 1;\n  const df = {};\n  docs.forEach(d => new Set(d).forEach(w => df[w] = (df[w] || 0) + 1));\n  const qTerms = [...new Set(tok(query))];\n  const k1 = 1.5, b = 0.75;\n\n  const scored = docs.map((d, idx) => {\n    const tf = {};\n    d.forEach(w => tf[w] = (tf[w] || 0) + 1);\n    let score = 0;\n    for (const t of qTerms) {\n      if (!tf[t]) continue;\n      const idf = Math.log(1 + (N - df[t] + 0.5) / (df[t] + 0.5));\n      score += idf * (tf[t] * (k1 + 1)) / (tf[t] + k1 * (1 - b + b * d.length / avgLen));\n    }\n    return { idx, score };\n  });\n\n  scored.sort((a, b) => b.score - a.score);\n  let top = scored.slice(0, TOP_K);\n  if (top[0].score === 0) top = scored.slice(0, 0).concat(Array.from({length: Math.min(TOP_K, N)}, (_, i) => ({ idx: i }))); // fallback: start of doc\n  top.sort((a, b) => a.idx - b.idx); // keep original reading order\n  selected = top.map(s => chunks[s.idx]);\n}\n\nconst context = selected.map((c, i) => `[Excerpt ${i + 1}]\\n${c}`).join('\\n\\n');\n\nreturn [{ json: {\n  messages: [\n    { role: 'system', content: system },\n    { role: 'user', content: `DOCUMENT EXCERPTS:\\n${context}\\n\\nQUESTION: ${query}` }\n  ],\n  chunksUsed: selected.length,\n  totalChunks: chunks.length\n} }];\n"
+      },
+      "id": "baa6accd-24f6-43e0-98d3-82b92998f8a5",
+      "name": "Chunk & Retrieve (BM25)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'openai/gpt-oss-20b', temperature: 0.2, max_tokens: 1024, messages: $json.messages }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "3378cec2-d1af-463f-b03f-2e69a352df4b",
+      "name": "Groq Chat Completion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1136,
+        496
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "GC3K5GuVULlQYTY5",
+          "name": "Header Auth account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.choices ? { answer: $json.choices[0].message.content } : { answer: 'GROQ ERROR: ' + JSON.stringify($json.error || $json) } }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "id": "71c9e487-0aaf-4cd3-bb4d-47d9de0d0fe5",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1376,
+        496
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract PDF Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PDF Text": {
+      "main": [
+        [
+          {
+            "node": "Chunk & Retrieve (BM25)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunk & Retrieve (BM25)": {
+      "main": [
+        [
+          {
+            "node": "Groq Chat Completion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Completion": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "2d67e242-6847-4ae5-9eb4-7c9d4f9bc8e9",
+  "id": "6XwC234p5G4tJP9a",
+  "meta": {},
+  "pinData": {}
+}
