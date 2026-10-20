@@ -7,6 +7,9 @@
 
 > **Workflow Sequence #11** in the [Maheen Azhar n8n Workflow Collection](https://github.com/maheenazhar/n8n-workflows-collection).
 
+
+> 📊 **In-Depth Technical Report:** For detailed node configurations, runtime mechanics, security audits, and failure mode analysis, read the **[Comprehensive Technical & Operational Report](REPORT.md)**.
+
 ---
 
 ## 📖 Overview
